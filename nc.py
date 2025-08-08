@@ -46,12 +46,17 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.response.defer(ephemeral=True)
 
-    # Nur die IDs aus dem Cache überprüfen
-    members_to_untimeout = [
-        guild.get_member(user_id)
-        for user_id in timeout_cache.keys()
-        if guild.get_member(user_id)
-    ]
+    members_to_untimeout = []
+
+    # Verwende fetch_member statt get_member
+    for user_id in timeout_cache.keys():
+        try:
+            member = await guild.fetch_member(user_id)
+            members_to_untimeout.append(member)
+        except discord.NotFound:
+            pass  # Mitglied ist nicht mehr auf dem Server
+        except discord.HTTPException as e:
+            print(f"❌ Fehler beim Abrufen von Member {user_id}: {e}")
 
     async def untimeout(member):
         try:
