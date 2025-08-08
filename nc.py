@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import os
 import asyncio
 from keep_alive import keep_alive
+
 keep_alive()
 
 # ==== Konfiguration ====
@@ -28,7 +29,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # ==== Slash-Command ====
-@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts (nur für Berechtigte).")
+@tree.command(name="removetimeout", description="Entfernt aktive Timeouts basierend auf Audit-Log (nur für Berechtigte).")
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
     if interaction.user.id not in TIMEOUT_WHITELIST:
@@ -45,12 +46,32 @@ async def removetimeout(interaction: discord.Interaction, target: str):
         return
 
     await interaction.response.defer(ephemeral=True)
-    count = 0
 
-    for member in guild.members:
+    now = datetime.now(timezone.utc)
+    count = 0
+    seen_user_ids = set()
+
+    # Gehe die letzten 150 Audit-Log-Einträge durch
+    async for entry in guild.audit_logs(limit=150, action=discord.AuditLogAction.member_update):
+        member = entry.target
+
+        # Vermeide doppelte Verarbeitung
+        if not isinstance(member, discord.Member):
+            continue
+        if member.id in seen_user_ids:
+            continue
+        seen_user_ids.add(member.id)
+
+        # Prüfen, ob Timeout gesetzt wurde und noch aktiv ist
+        before = entry.before
+        after = entry.after
+
         if (
-            member.communication_disabled_until
-            and member.communication_disabled_until > datetime.now(timezone.utc)
+            hasattr(before, "communication_disabled_until")
+            and hasattr(after, "communication_disabled_until")
+            and (before.communication_disabled_until != after.communication_disabled_until)
+            and after.communication_disabled_until
+            and after.communication_disabled_until > now
         ):
             try:
                 await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user}")
@@ -58,7 +79,7 @@ async def removetimeout(interaction: discord.Interaction, target: str):
             except Exception as e:
                 print(f"❌ Fehler bei {member}: {e}")
 
-    await interaction.followup.send(f"✅ {count} Nutzer wurden enttimeoutet.")
+    await interaction.followup.send(f"✅ {count} Nutzer wurden per Audit-Log enttimeoutet.")
 
 # ==== Bot Events ====
 @bot.event
