@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timezone
 import os
@@ -24,8 +24,10 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-keep_alive()  # Webserver starten (z.B. für UptimeRobot)
+# Cache für Timeouts
+timeout_cache = {}
 
+# ==== Slash-Command ====
 @tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts (nur für Berechtigte).")
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
@@ -44,12 +46,11 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.response.defer(ephemeral=True)
 
-    await guild.chunk()  # Alle Mitglieder in den Cache laden
-
-    now = datetime.now(timezone.utc)
+    # Nur die IDs aus dem Cache überprüfen
     members_to_untimeout = [
-        member for member in guild.members
-        if member.communication_disabled_until and member.communication_disabled_until > now
+        guild.get_member(user_id)
+        for user_id in timeout_cache.keys()
+        if guild.get_member(user_id)
     ]
 
     async def untimeout(member):
@@ -60,7 +61,7 @@ async def removetimeout(interaction: discord.Interaction, target: str):
             print(f"❌ Fehler bei {member}: {e}")
             return 0
 
-    semaphore = asyncio.Semaphore(25)  # max 25 parallel
+    semaphore = asyncio.Semaphore(25)
 
     async def sem_untimeout(m):
         async with semaphore:
@@ -71,6 +72,24 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.followup.send(f"✅ {count} Nutzer wurden enttimeoutet.")
 
+# ==== Timeout-Cache Updater Task ====
+@tasks.loop(minutes=5)
+async def update_timeout_cache():
+    await bot.wait_until_ready()
+    print("🔄 Aktualisiere Timeout-Cache...")
+    for guild in bot.guilds:
+        try:
+            await guild.chunk()
+            now = datetime.now(timezone.utc)
+            timeout_cache.clear()
+            for member in guild.members:
+                if member.communication_disabled_until and member.communication_disabled_until > now:
+                    timeout_cache[member.id] = member.communication_disabled_until
+            print(f"✅ {len(timeout_cache)} aktive Timeouts im Cache.")
+        except Exception as e:
+            print(f"❌ Fehler beim Aktualisieren des Caches: {e}")
+
+# ==== Bot Events ====
 @bot.event
 async def on_ready():
     print(f"✅ Bot ist online als {bot.user}")
@@ -79,6 +98,10 @@ async def on_ready():
         print(f"🔃 {len(synced)} Slash-Commands synchronisiert.")
     except Exception as e:
         print(f"❌ Fehler beim Slash-Sync: {e}")
+    update_timeout_cache.start()
+
+# ==== Bot starten ====
+keep_alive()
 
 async def main():
     async with bot:
