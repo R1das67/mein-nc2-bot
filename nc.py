@@ -4,9 +4,10 @@ from discord import app_commands
 from datetime import datetime, timezone
 import os
 import asyncio
-from keep_alive import keep_alive
 
-keep_alive()
+# ==== Optional: keep_alive entfernen, falls du es nicht brauchst ====
+# from keep_alive import keep_alive
+# keep_alive()
 
 # ==== Konfiguration ====
 TOKEN = os.getenv("DISCORD_TOKEN") or "DEIN_BOT_TOKEN_HIER"
@@ -49,37 +50,27 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     now = datetime.now(timezone.utc)
     count = 0
-    seen_user_ids = set()
+    seen_ids = set()
 
-    # Gehe die letzten 150 Audit-Log-Einträge durch
+    # Durchsuche Audit-Log nach Timeouts
     async for entry in guild.audit_logs(limit=150, action=discord.AuditLogAction.member_update):
         member = entry.target
 
-        # Vermeide doppelte Verarbeitung
         if not isinstance(member, discord.Member):
             continue
-        if member.id in seen_user_ids:
+        if member.id in seen_ids:
             continue
-        seen_user_ids.add(member.id)
+        seen_ids.add(member.id)
 
-        # Prüfen, ob Timeout gesetzt wurde und noch aktiv ist
-        before = entry.before
-        after = entry.after
-
-        if (
-            hasattr(before, "communication_disabled_until")
-            and hasattr(after, "communication_disabled_until")
-            and (before.communication_disabled_until != after.communication_disabled_until)
-            and after.communication_disabled_until
-            and after.communication_disabled_until > now
-        ):
+        # Direkte Prüfung: Ist Timeout noch aktiv?
+        if member.communication_disabled_until and member.communication_disabled_until > now:
             try:
                 await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user}")
                 count += 1
             except Exception as e:
                 print(f"❌ Fehler bei {member}: {e}")
 
-    await interaction.followup.send(f"✅ {count} Nutzer wurden per Audit-Log enttimeoutet.")
+    await interaction.followup.send(f"✅ {count} Nutzer wurden enttimeoutet.")
 
 # ==== Bot Events ====
 @bot.event
