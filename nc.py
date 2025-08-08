@@ -48,7 +48,6 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     members_to_untimeout = []
 
-    # Verwende fetch_member statt get_member
     for user_id in timeout_cache.keys():
         try:
             member = await guild.fetch_member(user_id)
@@ -84,13 +83,17 @@ async def update_timeout_cache():
     print("🔄 Aktualisiere Timeout-Cache...")
     for guild in bot.guilds:
         try:
-            await guild.chunk()
             now = datetime.now(timezone.utc)
             timeout_cache.clear()
-            for member in guild.members:
-                if member.communication_disabled_until and member.communication_disabled_until > now:
+
+            async for member in guild.fetch_members(limit=None):
+                if (
+                    member.communication_disabled_until
+                    and member.communication_disabled_until > now
+                ):
                     timeout_cache[member.id] = member.communication_disabled_until
-            print(f"✅ {len(timeout_cache)} aktive Timeouts im Cache.")
+
+            print(f"✅ {len(timeout_cache)} aktive Timeouts im Cache (inkl. offline Nutzer).")
         except Exception as e:
             print(f"❌ Fehler beim Aktualisieren des Caches: {e}")
 
