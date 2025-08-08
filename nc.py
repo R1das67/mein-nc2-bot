@@ -4,7 +4,7 @@ from discord import app_commands
 from datetime import datetime, timezone
 import os
 import asyncio
-from keep_alive import keep_alive  # <- hier
+from keep_alive import keep_alive
 
 # ==== Konfiguration ====
 TOKEN = os.getenv("DISCORD_TOKEN") or "DEIN_BOT_TOKEN_HIER"
@@ -24,9 +24,9 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-keep_alive()  # <- und hier
+keep_alive()  # Webserver starten (z.B. für UptimeRobot)
 
-@tree.command(name="removetimeout", description="Entfernt aktive Timeouts basierend auf Audit-Log (nur für Berechtigte).")
+@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts (nur für Berechtigte).")
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
     if interaction.user.id not in TIMEOUT_WHITELIST:
@@ -44,25 +44,30 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.response.defer(ephemeral=True)
 
+    await guild.chunk()  # Alle Mitglieder in den Cache laden
+
     now = datetime.now(timezone.utc)
-    count = 0
-    seen_ids = set()
+    members_to_untimeout = [
+        member for member in guild.members
+        if member.communication_disabled_until and member.communication_disabled_until > now
+    ]
 
-    async for entry in guild.audit_logs(limit=150, action=discord.AuditLogAction.member_update):
-        member = entry.target
+    async def untimeout(member):
+        try:
+            await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user}")
+            return 1
+        except Exception as e:
+            print(f"❌ Fehler bei {member}: {e}")
+            return 0
 
-        if not isinstance(member, discord.Member):
-            continue
-        if member.id in seen_ids:
-            continue
-        seen_ids.add(member.id)
+    semaphore = asyncio.Semaphore(25)  # max 25 parallel
 
-        if member.communication_disabled_until and member.communication_disabled_until > now:
-            try:
-                await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user}")
-                count += 1
-            except Exception as e:
-                print(f"❌ Fehler bei {member}: {e}")
+    async def sem_untimeout(m):
+        async with semaphore:
+            return await untimeout(m)
+
+    results = await asyncio.gather(*(sem_untimeout(m) for m in members_to_untimeout))
+    count = sum(results)
 
     await interaction.followup.send(f"✅ {count} Nutzer wurden enttimeoutet.")
 
