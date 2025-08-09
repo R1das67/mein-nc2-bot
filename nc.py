@@ -49,19 +49,18 @@ async def removetimeout(interaction: discord.Interaction, target: str):
     failed = []
     count = 0
     skipped = 0
-    processed = 0
 
-    # Mitgliederliste holen (Anzahl für Fortschritt)
     members = [m async for m in guild.fetch_members()]
     total_members = len(members)
 
-    # Erste Statusnachricht
     start_time = time.time()
     progress_msg = await interaction.followup.send(
         f"⏳ Starte Enttimeouten...\n0/{total_members} Mitglieder überprüft.",
         ephemeral=True
     )
 
+    # Erste Runde Timeout entfernen
+    processed = 0
     for member in members:
         try:
             if not member.timed_out:
@@ -75,7 +74,6 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
         processed += 1
 
-        # Fortschritt alle 50 User updaten (nicht jede Iteration, um Spam zu vermeiden)
         if processed % 50 == 0 or processed == total_members:
             elapsed = time.time() - start_time
             speed = processed / elapsed if elapsed > 0 else 0
@@ -87,14 +85,48 @@ async def removetimeout(interaction: discord.Interaction, target: str):
                 f"⏱ Geschätzte Restzeit: ~{remaining:.1f}s"
             ))
 
+    # Kurze Pause, damit Status sich aktualisiert
+    await asyncio.sleep(3)
+    members = [m async for m in guild.fetch_members()]
+
+    # Zweite Runde Timeout entfernen (letzter Check)
+    count2 = 0
+    skipped2 = 0
+    failed2 = []
+    processed = 0
+    for member in members:
+        try:
+            if not member.timed_out:
+                skipped2 += 1
+            else:
+                await member.edit(timed_out_until=None)
+                count2 += 1
+        except Exception as e:
+            failed2.append(str(member.id))
+            print(f"Failed 2nd round to remove timeout for {member.id}: {e}")
+
+        processed += 1
+
+        if processed % 50 == 0 or processed == total_members:
+            await progress_msg.edit(content=(
+                f"⏳ 2. Durchlauf läuft...\n"
+                f"**{processed}/{total_members}** Mitglieder überprüft.\n"
+                f"✅ {count + count2} entfernt | 📋 {skipped + skipped2} übersprungen | ⚠️ {len(failed) + len(failed2)} Fehler\n"
+            ))
+
     # Endergebnis
-    msg = f"✅ {count} Nutzer wurden enttimeoutet."
-    if skipped > 0:
-        msg += f"\n📋 {skipped} Nutzer waren bereits nicht getimeoutet."
-    if failed:
-        msg += f"\n⚠️ Fehler bei folgenden User-IDs: {', '.join(failed)}"
+    total_removed = count + count2
+    total_skipped = skipped + skipped2
+    total_failed = failed + failed2
+
+    msg = f"✅ Insgesamt {total_removed} Nutzer wurden enttimeoutet."
+    if total_skipped > 0:
+        msg += f"\n📋 {total_skipped} Nutzer waren bereits nicht getimeoutet."
+    if total_failed:
+        msg += f"\n⚠️ Fehler bei folgenden User-IDs: {', '.join(total_failed)}"
 
     await progress_msg.edit(content=msg)
+
 
 # ==== Event: Bot ist bereit ====
 @bot.event
