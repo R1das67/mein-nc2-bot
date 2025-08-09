@@ -1,15 +1,14 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands, AuditLogAction
 from datetime import datetime, timezone
 import os
 import asyncio
-from keep_alive import keep_alive
+from keep_alive import keep_alive  # Import der keep_alive Funktion
 
 # ==== Konfiguration ====
 TOKEN = os.getenv("DISCORD_TOKEN") or "DEIN_BOT_TOKEN_HIER"
 
-# ✅ Whitelist: Nur diese User-IDs dürfen /removetimeout verwenden
 TIMEOUT_WHITELIST = {
     662596869221908480,
     843180408152784936,
@@ -26,8 +25,23 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# ==== Slash-Command ====
-@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts basierend auf dem Audit-Log.")
+timeout_cache = set()
+
+async def load_timeouts(guild: discord.Guild):
+    global timeout_cache
+    timeout_cache.clear()
+
+    now = datetime.now(timezone.utc)
+    async for entry in guild.audit_logs(limit=200, action=AuditLogAction.member_update):
+        after = entry.after
+        if not after:
+            continue
+        timeout_until = getattr(after, "communication_disabled_until", None)
+        if timeout_until and timeout_until > now:
+            timeout_cache.add(entry.target.id)
+    print(f"🔄 Timeout-Cache geladen: {len(timeout_cache)} User")
+
+@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts basierend auf dem Cache und Audit-Log.")
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
     if interaction.user.id not in TIMEOUT_WHITELIST:
@@ -45,38 +59,35 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.response.defer(ephemeral=True)
 
-    now = datetime.now(timezone.utc)
-    processed_ids = set()
+    await load_timeouts(guild)
+
+    if not timeout_cache:
+        await interaction.followup.send("ℹ️ Es sind keine aktiven Timeouts vorhanden.")
+        return
+
     count = 0
+    failed = []
+    now = datetime.now(timezone.utc)
 
-    try:
-        async for entry in guild.audit_logs(limit=150, action=AuditLogAction.member_update):
-            if not entry.after or not hasattr(entry.after, "communication_disabled_until"):
-                continue
+    to_process = timeout_cache.copy()
 
-            timeout_until = entry.after.communication_disabled_until
-            if timeout_until and timeout_until > now:
-                target_user = entry.target
-                if target_user.id in processed_ids:
-                    continue
-                processed_ids.add(target_user.id)
+    for user_id in to_process:
+        try:
+            member = await guild.fetch_member(user_id)
+            if member.communication_disabled_until and member.communication_disabled_until > now:
+                await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user} ({interaction.user.id})")
+                count += 1
+            timeout_cache.discard(user_id)
+        except Exception as e:
+            failed.append(str(user_id))
+            print(f"❌ Fehler bei UserID {user_id}: {e}")
 
-                try:
-                    member = await guild.fetch_member(target_user.id)
-                    await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user}")
-                    count += 1
-                except Exception as e:
-                    print(f"❌ Fehler bei {target_user}: {e}")
+    msg = f"✅ {count} Nutzer wurden enttimeoutet."
+    if failed:
+        msg += f"\n⚠️ Fehler bei folgenden User-IDs: {', '.join(failed)}"
 
-        await interaction.followup.send(f"✅ {count} Nutzer wurden enttimeoutet (basierend auf Audit-Log).")
+    await interaction.followup.send(msg)
 
-    except discord.Forbidden:
-        await interaction.followup.send("❌ Ich habe keine Berechtigung, das Audit-Log zu lesen.")
-    except Exception as e:
-        print(f"❌ Unerwarteter Fehler: {e}")
-        await interaction.followup.send("❌ Ein Fehler ist aufgetreten.")
-
-# ==== Events ====
 @bot.event
 async def on_ready():
     print(f"✅ Bot ist online als {bot.user}")
@@ -86,11 +97,12 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Fehler beim Slash-Sync: {e}")
 
-# ==== Bot starten ====
+# ==== keep_alive starten ====
 keep_alive()
 
 async def main():
     async with bot:
         await bot.start(TOKEN)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
