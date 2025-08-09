@@ -1,10 +1,9 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime, timezone
 import os
 import asyncio
-from keep_alive import keep_alive  # Falls du keep_alive nutzt
+from keep_alive import keep_alive
 
 # ==== Konfiguration ====
 TOKEN = os.getenv("DISCORD_TOKEN") or "DEIN_BOT_TOKEN_HIER"
@@ -38,30 +37,29 @@ async def removetimeout(interaction: discord.Interaction, target: str):
         return
 
     guild = interaction.guild
-    if not guild:
-        await interaction.response.send_message("❌ Dieser Befehl funktioniert nur in einem Server.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-
-    now = datetime.now(timezone.utc)
-    count = 0
     failed = []
+    count = 0
+    skipped = 0
 
-    async for member in guild.fetch_members(limit=None):
+    async for member in guild.fetch_members():
         try:
-            if member.communication_disabled_until and member.communication_disabled_until > now:
-                await member.edit(communication_disabled_until=None, reason=f"Timeout entfernt durch {interaction.user}")
-                count += 1
+            if not member.timed_out:  # Prüft ob Member aktuell im Timeout ist
+                skipped += 1
+                continue
+
+            await member.edit(timed_out_until=None)  # Timeout entfernen
+            count += 1
         except Exception as e:
             failed.append(str(member.id))
-            print(f"❌ Fehler bei User {member}: {e}")
+            print(f"Failed to remove timeout for {member.id}: {e}")
 
     msg = f"✅ {count} Nutzer wurden enttimeoutet."
+    if skipped > 0:
+        msg += f"\n📋 {skipped} Nutzer waren bereits nicht getimeoutet."
     if failed:
         msg += f"\n⚠️ Fehler bei folgenden User-IDs: {', '.join(failed)}"
 
-    await interaction.followup.send(msg)
+    await interaction.response.send_message(msg)
 
 # ==== Event: Bot ist bereit ====
 @bot.event
@@ -73,7 +71,7 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Fehler beim Slash-Sync: {e}")
 
-# ==== keep_alive starten (falls vorhanden) ====
+# ==== keep_alive starten ====
 keep_alive()
 
 # ==== Bot starten ====
