@@ -29,11 +29,17 @@ tree = bot.tree
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
     if interaction.user.id not in TIMEOUT_WHITELIST:
-        await interaction.response.send_message("❌ Du bist nicht berechtigt, diesen Befehl zu verwenden.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Du bist nicht berechtigt, diesen Befehl zu verwenden.",
+            ephemeral=True
+        )
         return
 
     if target.lower() != "everyone":
-        await interaction.response.send_message("❌ Ungültiges Ziel. Nur 'everyone' ist erlaubt.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Ungültiges Ziel. Nur 'everyone' ist erlaubt.",
+            ephemeral=True
+        )
         return
 
     guild = interaction.guild
@@ -43,11 +49,11 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     async for member in guild.fetch_members():
         try:
-            if not member.timed_out:  # Prüft ob Member aktuell im Timeout ist
+            if not member.timed_out:
                 skipped += 1
                 continue
 
-            await member.edit(timed_out_until=None)  # Timeout entfernen
+            await member.edit(timed_out_until=None)
             count += 1
         except Exception as e:
             failed.append(str(member.id))
