@@ -4,6 +4,7 @@ from discord import app_commands
 import os
 import asyncio
 from keep_alive import keep_alive
+import time
 
 # ==== Konfiguration ====
 TOKEN = os.getenv("DISCORD_TOKEN") or "DEIN_BOT_TOKEN_HIER"
@@ -19,7 +20,7 @@ TIMEOUT_WHITELIST = {
 # ==== Bot Setup ====
 intents = discord.Intents.default()
 intents.guilds = True
-intents.members = True
+intents.members = True  # Wichtig für vollständige Member-Liste
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -42,34 +43,58 @@ async def removetimeout(interaction: discord.Interaction, target: str):
         )
         return
 
-    # Erst Discord sagen, dass wir länger brauchen werden
     await interaction.response.defer(ephemeral=True)
 
     guild = interaction.guild
     failed = []
     count = 0
     skipped = 0
+    processed = 0
 
-    async for member in guild.fetch_members():
+    # Mitgliederliste holen (Anzahl für Fortschritt)
+    members = [m async for m in guild.fetch_members()]
+    total_members = len(members)
+
+    # Erste Statusnachricht
+    start_time = time.time()
+    progress_msg = await interaction.followup.send(
+        f"⏳ Starte Enttimeouten...\n0/{total_members} Mitglieder überprüft.",
+        ephemeral=True
+    )
+
+    for member in members:
         try:
             if not member.timed_out:
                 skipped += 1
-                continue
-
-            await member.edit(timed_out_until=None)
-            count += 1
+            else:
+                await member.edit(timed_out_until=None)
+                count += 1
         except Exception as e:
             failed.append(str(member.id))
             print(f"Failed to remove timeout for {member.id}: {e}")
 
+        processed += 1
+
+        # Fortschritt alle 50 User updaten (nicht jede Iteration, um Spam zu vermeiden)
+        if processed % 50 == 0 or processed == total_members:
+            elapsed = time.time() - start_time
+            speed = processed / elapsed if elapsed > 0 else 0
+            remaining = (total_members - processed) / speed if speed > 0 else 0
+            await progress_msg.edit(content=(
+                f"⏳ Enttimeouten läuft...\n"
+                f"**{processed}/{total_members}** Mitglieder überprüft.\n"
+                f"✅ {count} entfernt | 📋 {skipped} übersprungen | ⚠️ {len(failed)} Fehler\n"
+                f"⏱ Geschätzte Restzeit: ~{remaining:.1f}s"
+            ))
+
+    # Endergebnis
     msg = f"✅ {count} Nutzer wurden enttimeoutet."
     if skipped > 0:
         msg += f"\n📋 {skipped} Nutzer waren bereits nicht getimeoutet."
     if failed:
         msg += f"\n⚠️ Fehler bei folgenden User-IDs: {', '.join(failed)}"
 
-    # Nach Abschluss die finale Antwort senden
-    await interaction.followup.send(msg)
+    await progress_msg.edit(content=msg)
 
 # ==== Event: Bot ist bereit ====
 @bot.event
