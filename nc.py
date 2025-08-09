@@ -25,22 +25,8 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# ==== Cache für User mit Timeout ====
-timeout_cache = set()
-
-# ==== Lade alle getimeouteten User direkt vom Guild-Mitgliedern (langsamer, aber zuverlässig) ====
-async def load_timeouts(guild: discord.Guild):
-    global timeout_cache
-    timeout_cache.clear()
-
-    now = datetime.now(timezone.utc)
-    async for member in guild.fetch_members(limit=None):
-        if member.communication_disabled_until and member.communication_disabled_until > now:
-            timeout_cache.add(member.id)
-    print(f"🔄 Timeout-Cache geladen: {len(timeout_cache)} User")
-
 # ==== Slash-Command /removetimeout everyone ====
-@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts (langsamer, prüft alle Mitglieder).")
+@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts.")
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
     if interaction.user.id not in TIMEOUT_WHITELIST:
@@ -58,29 +44,18 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.response.defer(ephemeral=True)
 
-    # Lade Cache neu (alle Mitglieder checken)
-    await load_timeouts(guild)
-
-    if not timeout_cache:
-        await interaction.followup.send("ℹ️ Es sind keine aktiven Timeouts vorhanden.")
-        return
-
+    now = datetime.now(timezone.utc)
     count = 0
     failed = []
-    now = datetime.now(timezone.utc)
 
-    to_process = timeout_cache.copy()
-
-    for user_id in to_process:
+    async for member in guild.fetch_members(limit=None):
         try:
-            member = await guild.fetch_member(user_id)
             if member.communication_disabled_until and member.communication_disabled_until > now:
-                await member.edit(communication_disabled_until=None, reason=f"Enttimeoutet durch {interaction.user} ({interaction.user.id})")
+                await member.edit(communication_disabled_until=None, reason=f"Timeout entfernt durch {interaction.user}")
                 count += 1
-            timeout_cache.discard(user_id)
         except Exception as e:
-            failed.append(str(user_id))
-            print(f"❌ Fehler bei UserID {user_id}: {e}")
+            failed.append(str(member.id))
+            print(f"❌ Fehler bei User {member}: {e}")
 
     msg = f"✅ {count} Nutzer wurden enttimeoutet."
     if failed:
