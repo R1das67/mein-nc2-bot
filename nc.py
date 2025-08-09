@@ -1,10 +1,10 @@
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands, AuditLogAction
+from discord.ext import commands
+from discord import app_commands
 from datetime import datetime, timezone
 import os
 import asyncio
-from keep_alive import keep_alive  # Import der keep_alive Funktion
+from keep_alive import keep_alive  # Falls du keep_alive nutzt
 
 # ==== Konfiguration ====
 TOKEN = os.getenv("DISCORD_TOKEN") or "DEIN_BOT_TOKEN_HIER"
@@ -25,23 +25,22 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+# ==== Cache für User mit Timeout ====
 timeout_cache = set()
 
+# ==== Lade alle getimeouteten User direkt vom Guild-Mitgliedern (langsamer, aber zuverlässig) ====
 async def load_timeouts(guild: discord.Guild):
     global timeout_cache
     timeout_cache.clear()
 
     now = datetime.now(timezone.utc)
-    async for entry in guild.audit_logs(limit=200, action=AuditLogAction.member_update):
-        after = entry.after
-        if not after:
-            continue
-        timeout_until = getattr(after, "communication_disabled_until", None)
-        if timeout_until and timeout_until > now:
-            timeout_cache.add(entry.target.id)
+    async for member in guild.fetch_members(limit=None):
+        if member.communication_disabled_until and member.communication_disabled_until > now:
+            timeout_cache.add(member.id)
     print(f"🔄 Timeout-Cache geladen: {len(timeout_cache)} User")
 
-@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts basierend auf dem Cache und Audit-Log.")
+# ==== Slash-Command /removetimeout everyone ====
+@tree.command(name="removetimeout", description="Entfernt alle aktiven Timeouts (langsamer, prüft alle Mitglieder).")
 @app_commands.describe(target="Zielgruppe (nur 'everyone' erlaubt)")
 async def removetimeout(interaction: discord.Interaction, target: str):
     if interaction.user.id not in TIMEOUT_WHITELIST:
@@ -59,6 +58,7 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.response.defer(ephemeral=True)
 
+    # Lade Cache neu (alle Mitglieder checken)
     await load_timeouts(guild)
 
     if not timeout_cache:
@@ -88,6 +88,7 @@ async def removetimeout(interaction: discord.Interaction, target: str):
 
     await interaction.followup.send(msg)
 
+# ==== Event: Bot ist bereit ====
 @bot.event
 async def on_ready():
     print(f"✅ Bot ist online als {bot.user}")
@@ -97,9 +98,10 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Fehler beim Slash-Sync: {e}")
 
-# ==== keep_alive starten ====
+# ==== keep_alive starten (falls vorhanden) ====
 keep_alive()
 
+# ==== Bot starten ====
 async def main():
     async with bot:
         await bot.start(TOKEN)
