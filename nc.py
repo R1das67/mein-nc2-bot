@@ -42,6 +42,9 @@ async def removetimeout(interaction: discord.Interaction, target: str):
         )
         return
 
+    # Erst Discord sagen, dass wir länger brauchen werden
+    await interaction.response.defer(ephemeral=True)
+
     guild = interaction.guild
     failed = []
     count = 0
@@ -65,7 +68,8 @@ async def removetimeout(interaction: discord.Interaction, target: str):
     if failed:
         msg += f"\n⚠️ Fehler bei folgenden User-IDs: {', '.join(failed)}"
 
-    await interaction.response.send_message(msg)
+    # Nach Abschluss die finale Antwort senden
+    await interaction.followup.send(msg)
 
 # ==== Event: Bot ist bereit ====
 @bot.event
